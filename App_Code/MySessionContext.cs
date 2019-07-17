@@ -1,18 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Web;
 
 /// <summary>
 /// 会话上下文
 /// </summary>
-public class MySessionContext
+public static class MySessionContext
 {
-    public MySessionContext(){}
-
+    /// <summary>
+    /// 会话中存放 SessionId 的键名称
+    /// </summary>
     private static string SessionIdKey = Guid.NewGuid().ToString("N");
+    /// <summary>
+    /// 会话中存放 Expire 的键名称
+    /// </summary>
     private static string ExpireKey = Guid.NewGuid().ToString("N");
-
+    /// <summary>
+    /// 会话数据
+    /// </summary>
     private static Dictionary<string, Dictionary<string, object>> SessionData = new Dictionary<string, Dictionary<string, object>>();
 
     #region Init
@@ -21,6 +26,9 @@ public class MySessionContext
     /// 是否初始化
     /// </summary>
     private static bool IsInit = false;
+    /// <summary>
+    /// 会话初始化
+    /// </summary>
     private static void InitSessionContext() {
         System.Timers.Timer t = new System.Timers.Timer(30000);   //实例化Timer类，设置间隔时间为30 * 1,000 毫秒；   
         t.Elapsed += new System.Timers.ElapsedEventHandler(theout); //到达时间的时候执行事件；   
@@ -29,45 +37,72 @@ public class MySessionContext
 
         IsInit = true;
     }
-    
+
+    private static object locker = new object();
+    /// <summary>
+    /// 处理过期会话数据
+    /// </summary>
+    /// <param name="source"></param>
+    /// <param name="e"></param>
     private static void theout(object source, System.Timers.ElapsedEventArgs e)
     {
-        foreach (KeyValuePair<string, Dictionary<string, object>> kvp in SessionData)
+        lock (locker)
         {
-            Dictionary<string, object> _Session = kvp.Value;
-            if (_Session.ContainsKey(ExpireKey))
+            try
             {
-                DateTime Expire;
-                try
+                foreach (KeyValuePair<string, Dictionary<string, object>> kvp in SessionData)
                 {
-                    Expire = (DateTime)_Session[ExpireKey];
-                }
-                catch
-                {
-                    Expire = DateTime.Now;
-                }
+                    Dictionary<string, object> _Session = kvp.Value;
+                    if (_Session.ContainsKey(ExpireKey))
+                    {
+                        DateTime Expire;
+                        try
+                        {
+                            Expire = (DateTime)_Session[ExpireKey];
+                        }
+                        catch
+                        {
+                            Expire = DateTime.Now;
+                        }
 
-                TimeSpan ts = Expire - DateTime.Now;
-                if (ts.TotalSeconds <= 0)
-                {
-                    SessionData.Remove(kvp.Key);
+                        TimeSpan ts = Expire - DateTime.Now;
+                        if (ts.TotalSeconds <= 0)
+                        {
+                            SessionData.Remove(kvp.Key);
+                        }
+                    }
+                    else
+                    {
+                        SessionData.Remove(kvp.Key);
+                    }
                 }
             }
-            else
-            {
-                SessionData.Remove(kvp.Key);
-            }
+            catch { }
         }
-
     }
 
     #endregion
 
-    private static Dictionary<string, object> Get(string SessionID) {
-        return SessionData[SessionID];
+    /// <summary>
+    /// 超时时间。单位分钟。默认20分钟
+    /// </summary>
+    private static double DefaultSessionTimeout
+    {
+        get {
+            try
+            {
+                return Convert.ToDouble(System.Configuration.ConfigurationManager.AppSettings["SessionTimeout"]);
+            }
+            catch
+            {
+                return 20;
+            }
+        }
     }
 
-
+    /// <summary>
+    /// 当前会话
+    /// </summary>
     public static MySession Current
     {
         get
@@ -75,18 +110,7 @@ public class MySessionContext
             if (!IsInit) {
                 InitSessionContext();
             }
-
-            //超时时间。单位分钟
-            double SessionTimeout;
-            try
-            {
-                SessionTimeout = Convert.ToDouble(System.Configuration.ConfigurationManager.AppSettings["SessionTimeout"]);
-            }
-            catch
-            {
-                SessionTimeout = 20;
-            }
-
+            
             string SessionID = HttpContext.Current.Request["MySessionID"] ?? "null";
             
             Dictionary<string, object> Session = new Dictionary<string, object>();
@@ -101,7 +125,7 @@ public class MySessionContext
                 HttpContext.Current.Response.AppendCookie(cookie);
 
                 Session[SessionIdKey] = SessionID;
-                Session[ExpireKey] = DateTime.Now.AddMinutes(SessionTimeout);
+                Session[ExpireKey] = DateTime.Now.AddMinutes(DefaultSessionTimeout);
 
                 SessionData.Add(SessionID, Session);
             }
@@ -156,7 +180,11 @@ public class MySession {
         }
     }
     
-
+    /// <summary>
+    /// 设置键值
+    /// </summary>
+    /// <param name="key"></param>
+    /// <param name="value"></param>
     public void Set(string key, object value)
     {
         Data[key] = value;
@@ -172,11 +200,20 @@ public class MySession {
         return Data.ContainsKey(key);
     }
 
+    /// <summary>
+    /// 获取键值
+    /// </summary>
+    /// <param name="key"></param>
+    /// <returns></returns>
     public object Get(string key)
     {
         return IsExist(key) ? Data[key] : null;
     }
-
+    /// <summary>
+    /// 获取/设置键值
+    /// </summary>
+    /// <param name="key">键名称</param>
+    /// <returns></returns>
     public object this[string key]
     {
         get
